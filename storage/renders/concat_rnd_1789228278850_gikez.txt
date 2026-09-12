@@ -1,0 +1,2 @@
+file '/app/applet/storage/voice_cache/tts_717ad96c3fa6e6c4.mp3'
+file '/app/applet/storage/sample_audio/05_RadioFX_Station_ID_Sweeper.mp3'

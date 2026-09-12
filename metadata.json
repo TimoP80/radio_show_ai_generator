@@ -1,0 +1,6 @@
+{
+  "name": "AI Radio Show Creator",
+  "description": "AI-assisted radio production studio that scans local audio libraries, analyzes tracks with Gemini, crafts professional radio shows with DJ voice announcements, and exports finished broadcasts.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
