@@ -5,6 +5,8 @@ import fs from "fs";
 import path from "path";
 import util from "util";
 import { AudioTrack, RadioShow, ShowGeneratorParams, Announcement, AITrackAnalysis } from "../src/types.ts";
+import { getFfmpegPath, getFfprobePath } from "./binaries.ts";
+import { synthesizePcm } from "./pcm_synth.ts";
 
 const execFileAsync = util.promisify(execFile);
 const VOICE_CACHE_DIR = path.join(process.cwd(), "storage", "voice_cache");
@@ -473,7 +475,7 @@ export async function synthesizeAnnouncementSpeech(
 
     // Convert raw PCM to broadcast quality MP3 via ffmpeg
     try {
-      await execFileAsync("ffmpeg", [
+      await execFileAsync(getFfmpegPath(), [
         "-y",
         "-f",
         "s16le",
@@ -493,7 +495,7 @@ export async function synthesizeAnnouncementSpeech(
     } catch (e) {
       // If s16le fails, maybe it was already an encoded container
       try {
-        await execFileAsync("ffmpeg", ["-y", "-i", rawPcmFile, "-b:a", "192k", outMp3]);
+        await execFileAsync(getFfmpegPath(), ["-y", "-i", rawPcmFile, "-b:a", "192k", outMp3]);
         await fs.promises.unlink(rawPcmFile).catch(() => {});
       } catch (e2) {
         console.error("FFmpeg conversion failed:", e2);
@@ -506,25 +508,47 @@ export async function synthesizeAnnouncementSpeech(
     // Generate spoken announcement bed with synthetic radio telemetry and clear tone sequence
     const words = text.split(/\s+/).length;
     const duration = Math.max(3, Math.min(60, Math.round(words / 2.6)));
-    // Generate broadcast voice simulation track with pleasant synth voice bed
-    await execFileAsync("ffmpeg", [
-      "-y",
-      "-f",
-      "lavfi",
-      "-i",
-      `sine=frequency=220:duration=${duration}`,
-      "-af",
-      "volume=0.2,tremolo=f=8:d=0.5,lowpass=f=2500,highpass=f=300",
-      "-b:a",
-      "192k",
-      outMp3,
-    ]);
+    // Generate broadcast voice simulation track with pleasant synth voice bed.
+    // Synthesized in JS (no lavfi filter graph — some static ffmpeg builds
+    // crash on those) and transcoded to MP3 with a plain s16le encode.
+    const pcm = synthesizePcm({
+      durationSec: duration,
+      frequency: 220,
+      tremoloHz: 8,
+      tremoloDepth: 0.5,
+      amplitude: 0.3,
+      octaveHarmonic: 0.4,
+      fadeInSec: 0.02,
+      fadeOutSec: 0.05,
+      sampleRate: 44100,
+      channels: 2,
+    });
+    const rawPcmFile = path.join(VOICE_CACHE_DIR, `temp_bed_${hash}.pcm`);
+    await fs.promises.writeFile(rawPcmFile, pcm);
+    try {
+      await execFileAsync(getFfmpegPath(), [
+        "-y",
+        "-f",
+        "s16le",
+        "-ar",
+        "44100",
+        "-ac",
+        "2",
+        "-i",
+        rawPcmFile,
+        "-b:a",
+        "192k",
+        outMp3,
+      ]);
+    } finally {
+      await fs.promises.unlink(rawPcmFile).catch(() => {});
+    }
   }
 
   // Probe duration of the rendered voice file
   let finalDuration = Math.max(2, Math.round(text.split(" ").length / 2.5));
   try {
-    const { stdout } = await execFileAsync("ffprobe", [
+    const { stdout } = await execFileAsync(getFfprobePath(), [
       "-v",
       "quiet",
       "-print_format",

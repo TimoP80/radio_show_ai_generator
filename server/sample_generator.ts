@@ -3,6 +3,8 @@ import fs from "fs";
 import path from "path";
 import util from "util";
 import { addFolder } from "./db.ts";
+import { getFfmpegPath } from "./binaries.ts";
+import { synthesizePcm } from "./pcm_synth.ts";
 
 const execFileAsync = util.promisify(execFile);
 const SAMPLE_AUDIO_DIR = path.join(process.cwd(), "storage", "sample_audio");
@@ -79,19 +81,33 @@ export async function ensureSampleAudioLibrary(): Promise<string> {
     const destPath = path.join(SAMPLE_AUDIO_DIR, item.filename);
     if (!fs.existsSync(destPath)) {
       try {
-        // Generate real multi-tone synthesizer rhythm with harmonic tremolo using ffmpeg
-        const filterStr = [
-          `sine=frequency=${item.freq}:duration=${item.duration}`,
-          `tremolo=f=${(item.bpm / 60).toFixed(2)}:d=0.7`,
-          `volume=0.75`,
-        ].join(",");
+        // Synthesize the tone rhythm in pure JS (tremolo gated at the track BPM)
+        // and let ffmpeg do a plain s16le PCM -> MP3 transcode with ID3 tags.
+        // This avoids lavfi filter graphs, which some static ffmpeg builds
+        // crash on, and works identically on every platform.
+        const pcm = synthesizePcm({
+          durationSec: item.duration,
+          frequency: item.freq,
+          tremoloHz: item.bpm / 60,
+          tremoloDepth: 0.7,
+          amplitude: 0.75,
+          octaveHarmonic: 0.25,
+          sampleRate: 44100,
+          channels: 2,
+        });
+        const rawPcmFile = destPath.replace(/\.mp3$/i, ".pcm");
+        await fs.promises.writeFile(rawPcmFile, pcm);
 
-        await execFileAsync("ffmpeg", [
+        await execFileAsync(getFfmpegPath(), [
           "-y",
           "-f",
-          "lavfi",
+          "s16le",
+          "-ar",
+          "44100",
+          "-ac",
+          "2",
           "-i",
-          filterStr,
+          rawPcmFile,
           "-c:a",
           "libmp3lame",
           "-b:a",
@@ -112,6 +128,7 @@ export async function ensureSampleAudioLibrary(): Promise<string> {
           `TBPM=${item.bpm}`,
           destPath,
         ]);
+        await fs.promises.unlink(rawPcmFile).catch(() => {});
       } catch (err) {
         console.warn(`Failed to generate sample audio track ${item.filename}:`, err);
       }

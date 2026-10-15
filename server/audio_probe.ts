@@ -4,6 +4,7 @@ import fs from "fs";
 import path from "path";
 import util from "util";
 import { AudioTrack } from "../src/types.js";
+import { getFfprobePath } from "./binaries.ts";
 
 const execFileAsync = util.promisify(execFile);
 
@@ -48,7 +49,7 @@ export async function probeAudioFile(filePath: string): Promise<AudioTrack> {
 
   let probeData: ProbeResult = {};
   try {
-    const { stdout } = await execFileAsync("ffprobe", [
+    const { stdout } = await execFileAsync(getFfprobePath(), [
       "-v",
       "quiet",
       "-print_format",

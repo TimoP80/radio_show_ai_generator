@@ -8,6 +8,7 @@ import { getDb, getAllFolders } from "./server/db.ts";
 import { apiRouter } from "./server/routes.ts";
 import { ensureSampleAudioLibrary } from "./server/sample_generator.ts";
 import { scannerInstance } from "./server/scanner.ts";
+import { logBinaryInfo } from "./server/binaries.ts";
 
 const PORT = 3000;
 
@@ -21,6 +22,7 @@ async function startServer() {
   // Initialize SQLite database
   await getDb();
   console.log("[Studio DB] SQLite database initialized.");
+  logBinaryInfo();
 
   // Ensure default studio sample audio is generated
   try {

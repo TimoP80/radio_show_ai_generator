@@ -1,9 +1,12 @@
-import { spawn } from "child_process";
+import { execFile, spawn } from "child_process";
 import fs from "fs";
 import path from "path";
+import util from "util";
 import { RadioShow, RenderJob, RenderSettings } from "../src/types.ts";
 import { upsertRenderJob } from "./db.ts";
+import { getFfmpegPath } from "./binaries.ts";
 
+const execFileAsync = util.promisify(execFile);
 const RENDERS_DIR = path.join(process.cwd(), "storage", "renders");
 
 async function generateSilenceFile(durationSec: number, sampleRate: number): Promise<string> {
@@ -12,27 +15,33 @@ async function generateSilenceFile(durationSec: number, sampleRate: number): Pro
   if (fs.existsSync(silencePath)) {
     return silencePath;
   }
-  return new Promise((resolve, reject) => {
-    const ff = spawn("ffmpeg", [
+  // Digital silence as raw s16le stereo PCM, transcoded to MP3.
+  // (Avoids lavfi sources — some bundled static ffmpeg builds crash on those.)
+  const totalSamples = Math.round(safeDuration * sampleRate);
+  const pcm = Buffer.alloc(totalSamples * 2 * 2); // stereo, 16-bit, all zeros
+  const rawPcmFile = silencePath.replace(/\.mp3$/, ".pcm");
+  await fs.promises.writeFile(rawPcmFile, pcm);
+  try {
+    await execFileAsync(getFfmpegPath(), [
       "-y",
       "-f",
-      "lavfi",
+      "s16le",
+      "-ar",
+      String(sampleRate),
+      "-ac",
+      "2",
       "-i",
-      `anullsrc=r=${sampleRate}:cl=stereo`,
-      "-t",
-      String(safeDuration),
+      rawPcmFile,
       "-c:a",
       "libmp3lame",
       "-b:a",
       "128k",
       silencePath,
     ]);
-    ff.on("close", (code) => {
-      if (code === 0) resolve(silencePath);
-      else reject(new Error(`Failed to generate silence file: code ${code}`));
-    });
-    ff.on("error", reject);
-  });
+  } finally {
+    await fs.promises.unlink(rawPcmFile).catch(() => {});
+  }
+  return silencePath;
 }
 
 export async function renderRadioShow(
@@ -193,7 +202,7 @@ export async function renderRadioShow(
       ffmpegArgs.push(outputPath);
 
       await new Promise<void>((resolve, reject) => {
-        const proc = spawn("ffmpeg", ffmpegArgs);
+        const proc = spawn(getFfmpegPath(), ffmpegArgs);
         let stderrLog = "";
 
         proc.stderr.on("data", (data) => {
